@@ -1,0 +1,531 @@
+import type {
+  Patient,
+  ClinicalQuestion,
+  Language,
+  Kiosk,
+  AuditLog,
+  QueueEntry,
+} from '@/types';
+
+export const LANGUAGES: Language[] = [
+  { code: 'hi', label: 'Hindi', nativeLabel: 'हिंदी', flag: '🇮🇳' },
+  { code: 'en', label: 'English', nativeLabel: 'English', flag: '🇬🇧' },
+  { code: 'mr', label: 'Marathi', nativeLabel: 'मराठी', flag: '🇮🇳' },
+  { code: 'gu', label: 'Gujarati', nativeLabel: 'ગુજરાતી', flag: '🇮🇳' },
+  { code: 'ta', label: 'Tamil', nativeLabel: 'தமிழ்', flag: '🇮🇳' },
+  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు', flag: '🇮🇳' },
+  { code: 'bn', label: 'Bengali', nativeLabel: 'বাংলা', flag: '🇮🇳' },
+  { code: 'kn', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ', flag: '🇮🇳' },
+  { code: 'pa', label: 'Punjabi', nativeLabel: 'ਪੰਜਾਬੀ', flag: '🇮🇳' },
+  { code: 'or', label: 'Odia', nativeLabel: 'ଓଡ଼ିଆ', flag: '🇮🇳' },
+];
+
+// ===== Clinical Question Engine =====
+// Adaptive SOCRATES-style questions for chest pain complaint
+
+export const CLINICAL_QUESTIONS: ClinicalQuestion[] = [
+  {
+    id: 'q_onset',
+    module: 'HPI',
+    prompt: 'When did the chest pain start?',
+    promptHindi: 'छाती में दर्द कब से है?',
+    socratesKey: 'onset',
+    allowVoice: true,
+    allowFreeText: true,
+    redFlagTriggers: ['sudden', 'just now', 'minutes ago'],
+    options: [
+      { label: 'Today', value: 'today' },
+      { label: '2–3 days ago', value: '2-3 days' },
+      { label: '1 week ago', value: '1 week' },
+      { label: 'More than 1 month', value: '>1 month' },
+      { label: "I don't know", value: 'unknown' },
+    ],
+  },
+  {
+    id: 'q_location',
+    module: 'HPI',
+    prompt: 'Where exactly is the pain in your chest?',
+    promptHindi: 'दर्द छाती के किस हिस्से में है?',
+    socratesKey: 'location',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Center of chest', value: 'central' },
+      { label: 'Left side', value: 'left' },
+      { label: 'Right side', value: 'right' },
+      { label: 'Upper chest', value: 'upper' },
+      { label: 'All over', value: 'diffuse' },
+    ],
+  },
+  {
+    id: 'q_character',
+    module: 'HPI',
+    prompt: 'What does the pain feel like?',
+    promptHindi: 'दर्द कैसा लगता है?',
+    socratesKey: 'character',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Sharp / stabbing', value: 'sharp' },
+      { label: 'Pressing / squeezing', value: 'pressing' },
+      { label: 'Burning', value: 'burning' },
+      { label: 'Dull ache', value: 'dull' },
+      { label: 'Cramping', value: 'cramping' },
+    ],
+  },
+  {
+    id: 'q_radiation',
+    module: 'HPI',
+    prompt: 'Does the pain spread anywhere else?',
+    promptHindi: 'क्या दर्द कहीं और फैलता है?',
+    socratesKey: 'radiation',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Left arm', value: 'left arm' },
+      { label: 'Both arms', value: 'both arms' },
+      { label: 'Jaw / neck', value: 'jaw/neck' },
+      { label: 'Back', value: 'back' },
+      { label: 'No, only chest', value: 'none' },
+    ],
+  },
+  {
+    id: 'q_aggravating',
+    module: 'HPI',
+    prompt: 'What makes the pain worse?',
+    promptHindi: 'किससे दर्द बढ़ता है?',
+    socratesKey: 'aggravating',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Walking / activity', value: 'activity' },
+      { label: 'Deep breathing', value: 'breathing' },
+      { label: 'Lying down', value: 'lying' },
+      { label: 'Eating', value: 'eating' },
+      { label: 'Stress', value: 'stress' },
+      { label: 'Nothing specific', value: 'none' },
+    ],
+  },
+  {
+    id: 'q_relieving',
+    module: 'HPI',
+    prompt: 'What makes the pain better?',
+    promptHindi: 'किससे दर्द कम होता है?',
+    socratesKey: 'relieving',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Resting', value: 'rest' },
+      { label: 'Sitting up', value: 'sitting' },
+      { label: 'Medicine', value: 'medicine' },
+      { label: 'Nothing helps', value: 'nothing' },
+    ],
+  },
+  {
+    id: 'q_severity',
+    module: 'HPI',
+    prompt: 'How severe is your pain right now?',
+    promptHindi: 'अभी दर्द कितना तेज़ है?',
+    socratesKey: 'severity',
+    allowVoice: true,
+    allowFreeText: false,
+    options: [
+      { label: 'Mild (1–3)', value: 'mild' },
+      { label: 'Moderate (4–6)', value: 'moderate' },
+      { label: 'Severe (7–10)', value: 'severe' },
+    ],
+  },
+  {
+    id: 'q_breathlessness',
+    module: 'ROS',
+    prompt: 'Do you have breathlessness along with the chest pain?',
+    promptHindi: 'क्या छाती में दर्द के साथ सांस फूलती है?',
+    allowVoice: true,
+    allowFreeText: true,
+    redFlagTriggers: ['yes', 'severe', 'cannot breathe'],
+    options: [
+      { label: 'Yes, severe', value: 'severe' },
+      { label: 'Yes, mild', value: 'mild' },
+      { label: 'No', value: 'no' },
+    ],
+  },
+  {
+    id: 'q_sweating',
+    module: 'ROS',
+    prompt: 'Are you experiencing sweating?',
+    promptHindi: 'क्या आपको पसीना आ रहा है?',
+    allowVoice: true,
+    allowFreeText: true,
+    redFlagTriggers: ['yes', 'profuse'],
+    options: [
+      { label: 'Yes', value: 'yes' },
+      { label: 'No', value: 'no' },
+    ],
+  },
+  {
+    id: 'q_nausea',
+    module: 'ROS',
+    prompt: 'Do you feel nausea or vomiting?',
+    promptHindi: 'क्या आपको जी मिचलाता है या उल्टी होती है?',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Yes', value: 'yes' },
+      { label: 'No', value: 'no' },
+    ],
+  },
+  {
+    id: 'q_dizziness',
+    module: 'ROS',
+    prompt: 'Do you feel dizzy or lightheaded?',
+    promptHindi: 'क्या आपको चक्कर आता है?',
+    allowVoice: true,
+    allowFreeText: true,
+    redFlagTriggers: ['yes', 'fainted', 'fainted'],
+    options: [
+      { label: 'Yes', value: 'yes' },
+      { label: 'No', value: 'no' },
+    ],
+  },
+  {
+    id: 'q_previous_episodes',
+    module: 'HPI',
+    prompt: 'Have you had similar chest pain before?',
+    promptHindi: 'क्या पहले भी ऐसा दर्द हुआ है?',
+    allowVoice: true,
+    allowFreeText: true,
+    options: [
+      { label: 'Yes, previously', value: 'yes' },
+      { label: 'No, first time', value: 'no' },
+    ],
+  },
+];
+
+// ===== Demo Patient: Ramesh Sharma =====
+
+export const DEMO_PATIENT: Patient = {
+  id: 'p-001',
+  name: 'Ramesh Sharma',
+  age: 57,
+  sex: 'male',
+  abhaId: 'ABHA-88-2941-7720-4563',
+  hospitalId: 'AIIMS-OPD-2026-04823',
+  tokenNumber: 'A-047',
+  department: 'Cardiology',
+  language: 'hi',
+  mode: 'allopathic',
+  consentGranted: true,
+  status: 'completed',
+  priority: 'critical',
+  startTime: '09:14 AM',
+  completionTime: '09:22 AM',
+  chiefComplaint: {
+    complaint: 'Chest pain',
+    duration: '3 days',
+    severity: 'severe',
+  },
+  presentIllness: {
+    onset: '2–3 days ago',
+    location: 'Center of chest',
+    character: 'Pressing / squeezing',
+    radiation: 'Left arm',
+    aggravatingFactors: ['Walking / activity'],
+    relievingFactors: ['Resting'],
+    associatedSymptoms: ['Breathlessness (mild)', 'Sweating'],
+    progression: 'Gradually worsening over 3 days',
+    socratesNotes: {
+      onset: 'Started 2–3 days ago, gradually worsening',
+      location: 'Central chest',
+      character: 'Pressing/squeezing sensation',
+      radiation: 'Radiates to left arm',
+      aggravating: 'Worsens on walking/activity',
+      relieving: 'Partially relieved by rest',
+      severity: 'Severe (7/10)',
+    },
+  },
+  pastMedical: [
+    { name: 'Type 2 Diabetes', diagnosedYear: '2022', status: 'active', notes: 'On metformin since diagnosis' },
+    { name: 'Hypertension', diagnosedYear: '2023', status: 'controlled', notes: 'On telmisartan' },
+  ],
+  pastSurgical: [
+    { name: 'Appendectomy', approximateDate: '2019', reason: 'Acute appendicitis' },
+  ],
+  medications: [
+    { name: 'Metformin', dosage: '500 mg', frequency: 'Twice daily', source: 'ocr', verified: false },
+    { name: 'Telmisartan', dosage: '40 mg', frequency: 'Once daily', source: 'ocr', verified: false },
+    { name: 'Aspirin', dosage: '75 mg', frequency: 'Once daily', source: 'patient', verified: false },
+  ],
+  allergies: [
+    { substance: 'Penicillin', reaction: 'Skin rash', severity: 'moderate' },
+  ],
+  familyHistory: [
+    { condition: 'Coronary artery disease', relation: 'Father' },
+    { condition: 'Type 2 Diabetes', relation: 'Mother' },
+  ],
+  personalHistory: {
+    diet: 'Mixed, predominantly vegetarian',
+    sleep: '6–7 hours, disturbed',
+    physicalActivity: 'Sedentary lifestyle',
+    smoking: 'Quit 5 years ago (20 pack-years)',
+    alcohol: 'Occasional',
+    tobacco: 'No',
+    occupation: 'Retired bank clerk',
+  },
+  reviewOfSystems: [
+    { system: 'Cardiovascular', finding: 'Chest pain, palpitations', positive: true },
+    { system: 'Respiratory', finding: 'Mild breathlessness on exertion', positive: true },
+    { system: 'Gastrointestinal', finding: 'No complaints', positive: false },
+    { system: 'Neurological', finding: 'Occasional dizziness', positive: true },
+  ],
+  labValues: [
+    { test: 'HbA1c', value: '8.2', unit: '%', referenceRange: '< 5.7%', status: 'high', date: 'Jun 2025', source: 'ocr' },
+    { test: 'Fasting Blood Glucose', value: '156', unit: 'mg/dL', referenceRange: '70–100 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+    { test: 'Hemoglobin', value: '9.4', unit: 'g/dL', referenceRange: '13–17 g/dL', status: 'low', date: 'Jun 2025', source: 'ocr' },
+    { test: 'Total Cholesterol', value: '248', unit: 'mg/dL', referenceRange: '< 200 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+    { test: 'LDL', value: '168', unit: 'mg/dL', referenceRange: '< 100 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+    { test: 'Creatinine', value: '1.1', unit: 'mg/dL', referenceRange: '0.6–1.3 mg/dL', status: 'normal', date: 'Jun 2025', source: 'ocr' },
+  ],
+  documents: [
+    {
+      id: 'doc-1',
+      type: 'prescription',
+      title: 'OPD Prescription — Dr. Mehta',
+      date: 'Jan 2026',
+      thumbnailText: 'Rx\nMetformin 500mg BD\nTelmisartan 40mg OD\nAspirin 75mg OD\n— Dr. K. Mehta, MD\nAIIMS, New Delhi',
+      ocrConfidence: 92,
+      verified: false,
+      extractedData: {
+        diagnoses: ['Type 2 Diabetes Mellitus', 'Essential Hypertension'],
+        medications: [
+          { name: 'Metformin', dosage: '500 mg', frequency: 'Twice daily' },
+          { name: 'Telmisartan', dosage: '40 mg', frequency: 'Once daily' },
+          { name: 'Aspirin', dosage: '75 mg', frequency: 'Once daily' },
+        ],
+        dates: ['Jan 2026'],
+      },
+    },
+    {
+      id: 'doc-2',
+      type: 'lab-report',
+      title: 'Blood Test Report — Pathlab',
+      date: 'Jun 2025',
+      thumbnailText: 'LAB REPORT\nHbA1c: 8.2%\nFBS: 156 mg/dL\nHb: 9.4 g/dL\nCholesterol: 248\nLDL: 168\nCreatinine: 1.1',
+      ocrConfidence: 88,
+      verified: false,
+      extractedData: {
+        investigations: [
+          { test: 'HbA1c', value: '8.2', unit: '%', referenceRange: '< 5.7%', status: 'high', date: 'Jun 2025', source: 'ocr' },
+          { test: 'Fasting Blood Glucose', value: '156', unit: 'mg/dL', referenceRange: '70–100 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+          { test: 'Hemoglobin', value: '9.4', unit: 'g/dL', referenceRange: '13–17 g/dL', status: 'low', date: 'Jun 2025', source: 'ocr' },
+          { test: 'Total Cholesterol', value: '248', unit: 'mg/dL', referenceRange: '< 200 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+          { test: 'LDL', value: '168', unit: 'mg/dL', referenceRange: '< 100 mg/dL', status: 'high', date: 'Jun 2025', source: 'ocr' },
+        ],
+        dates: ['Jun 2025'],
+      },
+    },
+    {
+      id: 'doc-3',
+      type: 'discharge-summary',
+      title: 'Discharge Summary — Cardiology',
+      date: 'Mar 2025',
+      thumbnailText: 'DISCHARGE SUMMARY\nAdmission: Mar 2025\nDx: NSTEMI\nAngiography done\n2 vessels disease\nDischarged stable',
+      ocrConfidence: 85,
+      verified: false,
+      extractedData: {
+        diagnoses: ['NSTEMI (Non-ST Elevation MI)'],
+        procedures: [{ name: 'Coronary Angiography', date: 'Mar 2025' }],
+        dates: ['Mar 2025'],
+      },
+    },
+  ],
+  timeline: [
+    { date: '2019', label: 'Appendectomy', type: 'surgery' },
+    { date: '2022', label: 'Diabetes diagnosed', type: 'diagnosis' },
+    { date: '2023', label: 'Hypertension diagnosed', type: 'diagnosis' },
+    { date: 'Mar 2025', label: 'Hospital admission — NSTEMI', type: 'admission', documentId: 'doc-3' },
+    { date: 'Mar 2025', label: 'Coronary Angiography', type: 'procedure', documentId: 'doc-3' },
+    { date: 'Jun 2025', label: 'HbA1c: 8.2%', type: 'lab', documentId: 'doc-2' },
+    { date: 'Jan 2026', label: 'Medication changed', type: 'medication', documentId: 'doc-1' },
+    { date: 'Aug 2026', label: 'Current visit — Chest pain', type: 'visit' },
+  ],
+  redFlags: [
+    {
+      id: 'rf-1',
+      symptom: 'Severe chest pain + breathlessness',
+      severity: 'critical',
+      message: 'Symptoms suggest possible acute coronary syndrome. Requires immediate triage.',
+      triggeredAt: '09:16 AM',
+      acknowledged: false,
+    },
+    {
+      id: 'rf-2',
+      symptom: 'Sweating associated with chest pain',
+      severity: 'urgent',
+      message: 'Diaphoresis with chest pain — cardiac origin suspected.',
+      triggeredAt: '09:17 AM',
+      acknowledged: false,
+    },
+  ],
+};
+
+// ===== Physician Queue =====
+
+export const PHYSICIAN_QUEUE: QueueEntry[] = [
+  {
+    patient: DEMO_PATIENT,
+    waitTime: 4,
+    priority: 'critical',
+  },
+  {
+    patient: {
+      ...DEMO_PATIENT,
+      id: 'p-002',
+      name: 'Sunita Devi',
+      age: 62,
+      sex: 'female',
+      tokenNumber: 'A-048',
+      department: 'Cardiology',
+      priority: 'important',
+      status: 'waiting',
+      chiefComplaint: { complaint: 'Palpitations', duration: '1 week', severity: 'moderate' },
+      redFlags: [],
+      documents: [],
+      timeline: [{ date: 'Aug 2026', label: 'Current visit — Palpitations', type: 'visit' }],
+      completionTime: undefined,
+    },
+    waitTime: 8,
+    priority: 'important',
+  },
+  {
+    patient: {
+      ...DEMO_PATIENT,
+      id: 'p-003',
+      name: 'Mohammed Irfan',
+      age: 34,
+      sex: 'male',
+      tokenNumber: 'A-049',
+      department: 'General Medicine',
+      priority: 'routine',
+      status: 'waiting',
+      chiefComplaint: { complaint: 'Fever and body ache', duration: '2 days', severity: 'mild' },
+      redFlags: [],
+      documents: [],
+      timeline: [{ date: 'Aug 2026', label: 'Current visit — Fever', type: 'visit' }],
+      completionTime: undefined,
+    },
+    waitTime: 12,
+    priority: 'routine',
+  },
+  {
+    patient: {
+      ...DEMO_PATIENT,
+      id: 'p-004',
+      name: 'Lakshmi Amma',
+      age: 71,
+      sex: 'female',
+      tokenNumber: 'A-050',
+      department: 'Neurology',
+      priority: 'important',
+      status: 'waiting',
+      chiefComplaint: { complaint: 'Headache and blurred vision', duration: '5 days', severity: 'moderate' },
+      redFlags: [
+        {
+          id: 'rf-3',
+          symptom: 'Sudden blurred vision',
+          severity: 'urgent',
+          message: 'Sudden visual disturbance with headache — neurological review advised.',
+          triggeredAt: '09:30 AM',
+          acknowledged: false,
+        },
+      ],
+      documents: [],
+      timeline: [{ date: 'Aug 2026', label: 'Current visit — Headache', type: 'visit' }],
+      completionTime: undefined,
+    },
+    waitTime: 15,
+    priority: 'important',
+  },
+];
+
+// ===== Kiosks =====
+
+export const KIOSKS: Kiosk[] = [
+  { id: 'K-01', location: 'OPD Block A — Ground Floor', status: 'in-use', currentPatient: 'Ramesh Sharma', sessionProgress: 85, lastUsed: 'Active now' },
+  { id: 'K-02', location: 'OPD Block A — Ground Floor', status: 'available', lastUsed: '2 min ago' },
+  { id: 'K-03', location: 'OPD Block B — First Floor', status: 'in-use', currentPatient: 'Sunita Devi', sessionProgress: 42, lastUsed: 'Active now' },
+  { id: 'K-04', location: 'OPD Block B — First Floor', status: 'available', lastUsed: '5 min ago' },
+  { id: 'K-05', location: 'Cardiology Wing', status: 'in-use', currentPatient: 'Lakshmi Amma', sessionProgress: 67, lastUsed: 'Active now' },
+  { id: 'K-06', location: 'Cardiology Wing', status: 'maintenance', lastUsed: '2 hours ago' },
+  { id: 'K-07', location: 'AYUSH Department', status: 'available', lastUsed: '12 min ago' },
+  { id: 'K-08', location: 'AYUSH Department', status: 'offline', lastUsed: '1 hour ago' },
+];
+
+// ===== Audit Logs =====
+
+export const AUDIT_LOGS: AuditLog[] = [
+  { id: 'a-1', timestamp: '09:22:14 AM', user: 'K-01 (Ramesh Sharma)', role: 'Patient', action: 'History submitted', resource: 'Patient record p-001', ip: '10.0.1.24' },
+  { id: 'a-2', timestamp: '09:22:14 AM', user: 'K-01', role: 'System', action: 'Session data cleared', resource: 'Kiosk session K-01', ip: '10.0.1.24' },
+  { id: 'a-3', timestamp: '09:21:08 AM', user: 'K-01', role: 'System', action: 'OCR completed', resource: 'Document doc-3', ip: '10.0.1.24' },
+  { id: 'a-4', timestamp: '09:20:33 AM', user: 'K-01', role: 'System', action: 'Document scanned', resource: 'Document doc-3', ip: '10.0.1.24' },
+  { id: 'a-5', timestamp: '09:18:12 AM', user: 'K-01', role: 'System', action: 'Red flag triggered', resource: 'Red flag rf-1', ip: '10.0.1.24' },
+  { id: 'a-6', timestamp: '09:16:45 AM', user: 'K-01', role: 'System', action: 'Consent granted', resource: 'Patient p-001', ip: '10.0.1.24' },
+  { id: 'a-7', timestamp: '09:15:02 AM', user: 'K-01', role: 'System', action: 'Language selected: Hindi', resource: 'Patient p-001', ip: '10.0.1.24' },
+  { id: 'a-8', timestamp: '09:14:20 AM', user: 'K-01', role: 'System', action: 'Patient identified via ABHA', resource: 'Patient p-001', ip: '10.0.1.24' },
+  { id: 'a-9', timestamp: '09:14:00 AM', user: 'K-01', role: 'System', action: 'Session started', resource: 'Kiosk K-01', ip: '10.0.1.24' },
+  { id: 'a-10', timestamp: '09:08:33 AM', user: 'Dr. Priya Nair', role: 'Physician', action: 'Verified history for p-005', resource: 'Patient record p-005', ip: '10.0.2.10' },
+  { id: 'a-11', timestamp: '09:05:17 AM', user: 'admin@aiims', role: 'Admin', action: 'Added language: Punjabi', resource: 'Language config', ip: '10.0.0.5' },
+  { id: 'a-12', timestamp: '08:58:02 AM', user: 'Dr. Rajesh Kumar', role: 'Physician', action: 'Edited medication for p-004', resource: 'Patient record p-004', ip: '10.0.2.8' },
+];
+
+// ===== Admin Dashboard Stats =====
+
+export const ADMIN_STATS = {
+  totalPatientsToday: 4826,
+  completedHistories: 4213,
+  documentsScanned: 8945,
+  redFlagCases: 127,
+  avgCompletionTime: '8 min',
+  incompleteSessions: 486,
+};
+
+export const LANGUAGE_DISTRIBUTION = [
+  { language: 'Hindi', count: 1842, percentage: 38 },
+  { language: 'English', count: 1206, percentage: 25 },
+  { language: 'Marathi', count: 723, percentage: 15 },
+  { language: 'Tamil', count: 482, percentage: 10 },
+  { language: 'Bengali', count: 338, percentage: 7 },
+  { language: 'Others', count: 235, percentage: 5 },
+];
+
+export const DEPARTMENT_USAGE = [
+  { department: 'General Medicine', count: 1240, percentage: 26 },
+  { department: 'Cardiology', count: 892, percentage: 18 },
+  { department: 'Orthopedics', count: 725, percentage: 15 },
+  { department: 'Pediatrics', count: 578, percentage: 12 },
+  { department: 'AYUSH / Ayurveda', count: 482, percentage: 10 },
+  { department: 'Dermatology', count: 386, percentage: 8 },
+  { department: 'Neurology', count: 289, percentage: 6 },
+  { department: 'Other', count: 234, percentage: 5 },
+];
+
+export const HOURLY_INTAKE = [
+  { hour: '8 AM', count: 312 },
+  { hour: '9 AM', count: 528 },
+  { hour: '10 AM', count: 674 },
+  { hour: '11 AM', count: 589 },
+  { hour: '12 PM', count: 445 },
+  { hour: '1 PM', count: 298 },
+  { hour: '2 PM', count: 386 },
+  { hour: '3 PM', count: 512 },
+  { hour: '4 PM', count: 467 },
+  { hour: '5 PM', count: 389 },
+  { hour: '6 PM', count: 226 },
+];
+
+export const RED_FLAG_LOG = [
+  { id: 'rf-1', patient: 'Ramesh Sharma', token: 'A-047', symptom: 'Severe chest pain + breathlessness', severity: 'critical' as const, time: '09:18 AM', status: 'pending' as const, kiosk: 'K-01' },
+  { id: 'rf-3', patient: 'Lakshmi Amma', token: 'A-050', symptom: 'Sudden blurred vision + headache', severity: 'urgent' as const, time: '09:30 AM', status: 'pending' as const, kiosk: 'K-05' },
+  { id: 'rf-5', patient: 'Arjun Reddy', token: 'B-012', symptom: 'Severe bleeding from wound', severity: 'critical' as const, time: '09:05 AM', status: 'resolved' as const, kiosk: 'K-03' },
+  { id: 'rf-6', patient: 'Fatima Begum', token: 'C-034', symptom: 'Loss of consciousness', severity: 'critical' as const, time: '08:52 AM', status: 'resolved' as const, kiosk: 'K-02' },
+  { id: 'rf-7', patient: 'Gopal Patil', token: 'A-044', symptom: 'Stroke-like symptoms — facial droop', severity: 'critical' as const, time: '08:40 AM', status: 'resolved' as const, kiosk: 'K-04' },
+];
